@@ -1,0 +1,19 @@
+# Local virtual environments
+.venv/
+venv/
+
+# IDE files
+.idea/
+.vscode/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# OS-specific metadata
+.DS_Store
+Thumbs.db
