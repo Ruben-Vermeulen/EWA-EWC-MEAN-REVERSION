@@ -1,134 +1,63 @@
-# EWA–EWC Pairs Trading: Revisiting Chan (2013)
+# EWA/EWC pairs trading — revisiting Chan (2013)
 
-A small quantitative-finance research project examining whether a mean-reversion strategy inspired by Ernest P. Chan's *Algorithmic Trading: Winning Strategies and Their Rationale* (2013) remains effective on data after the book's publication.
+I started this project after reading Ernest P. Chan's *Algorithmic Trading* (2013). Chan uses the Australia (EWA) and Canada (EWC) ETFs to illustrate cointegration. I wanted to test a simple question: **does a mean-reversion strategy calibrated on data available before 2013 still work on later data?**
 
-**Research question:** Can an EWA–EWC mean-reversion signal, calibrated on 2006–2012 data, generate positive returns over 2013–2026 without re-estimating its core parameters?
+I use daily ETF prices from Yahoo Finance, estimate the relationship on **2006–2012**, and evaluate a fixed-parameter trading signal over **2013–2026**. This is an **adaptation of Chan's methods**, not an exact reproduction of one of his published backtests: his linear portfolio example uses EWA/EWC/IGE, while his two-ETF EWA/EWC trading example uses a Kalman filter.
 
-> **Scope:** This is an **adaptation**, not an exact replication of a published two-ETF backtest. Chan's Example 2.6 studies cointegration between EWA and EWC; his Example 2.8 backtests a linear z-score strategy on **EWA, EWC, and IGE**; and Example 3.3 applies a **Kalman filter** to EWA/EWC. This project combines the two-ETF pair with the simpler linear trading rule as a transparent baseline.
+The calculations, plots and code are in [`analysis.ipynb`](analysis.ipynb).
 
-## Methodology
+## Method
 
-**Data.** Daily Yahoo Finance prices for EWA (Australia ETF) and EWC (Canada ETF), obtained through `yfinance` with `auto_adjust=True`. All prices are denominated in USD. The initial parameter-estimation period is **2006–2012**, with **2013 onward** used for historical out-of-sample evaluation. Adjusted price data may be revised by the provider.
+1. **Estimate a hedge ratio.** Regress EWC prices on EWA prices using OLS on 2006–2012 data:
 
-### 1. Hedge ratio and spread
+   $$P_t^{\mathrm{EWC}} = \alpha + \beta P_t^{\mathrm{EWA}} + \varepsilon_t.$$
 
-Estimate an OLS regression using training data only:
+   Construct the spread $S_t=P_t^{\mathrm{EWC}}-\hat\beta P_t^{\mathrm{EWA}}$, with $\hat\beta=1.3937$.
 
-$$
-P_t^{\mathrm{EWC}}=\alpha+\beta P_t^{\mathrm{EWA}}+\varepsilon_t.
-$$
+2. **Test for cointegration.** Use ADF tests on the individual price levels and first differences, followed by the Engle–Granger test (`statsmodels.coint`) on the pair. The training-period Engle–Granger p-value is **0.0668**: significant at 10%, but **not at 5%**. This is weaker evidence than Chan reports for his historical sample.
 
-Construct the tradable two-ETF spread:
+3. **Estimate mean reversion.** Fit $\Delta S_t=\mu+\lambda S_{t-1}+u_t$ on the training spread. With $\hat\lambda=-0.017273$, Chan's approximation $h=-\ln(2)/\hat\lambda$ gives a half-life of about **40 trading days**.
 
-$$
-S_t=P_t^{\mathrm{EWC}}-\hat\beta P_t^{\mathrm{EWA}}.
-$$
+4. **Generate a trading signal.** Calculate the spread's rolling 40-day z-score and take $q_t=-z_t$ spread units. Each unit is long one share of EWC and short $\hat\beta$ shares of EWA. The hedge ratio and lookback stay fixed after 2012; the rolling mean and standard deviation use only observations up to the signal date.
 
-The estimated training-period hedge ratio is **$\hat\beta=1.3937$**.
+5. **Backtest.** Compute daily P&L using the *previous day's* share positions:
 
-### 2. Integration and cointegration tests
+   $$\mathrm{PnL}_t=\sum_{i\in\{\mathrm{EWA},\mathrm{EWC}\}}n_{i,t-1}(P_{i,t}-P_{i,t-1}).$$
 
-Apply augmented Dickey–Fuller tests to each price series and its first differences, followed by an Engle–Granger cointegration test (`statsmodels.tsa.stattools.coint`) with an intercept and one fixed lag.
+   Following Chan's simple convention, daily returns are P&L divided by the previous day's **gross dollar exposure**.
 
-- Both ETF price series are consistent with being integrated of order one, $I(1)$: unit-root tests on levels fail to reject, whereas tests on first differences reject.
-- The 2006–2012 Engle–Granger test yields **test statistic −3.2192** and **p-value 0.0668**: evidence at the 10% level, **not significant at 5%**.
+## Results (pre-cost)
 
-Failing to reject a unit root does not establish that it exists, and a cointegration test does not by itself guarantee a profitable trading strategy.
-
-### 3. Mean-reversion half-life
-
-Estimate on the training spread:
-
-$$
-\Delta S_t=\mu+\lambda S_{t-1}+u_t.
-$$
-
-Using Chan's approximation,
-
-$$
-h\approx-\frac{\ln 2}{\hat\lambda}.
-$$
-
-The fitted coefficient is **$\hat\lambda=-0.017273$**, implying a **40.13-trading-day half-life** and a **40-day lookback**. The model-implied equilibrium is approximately **3.76**.
-
-### 4. Trading signal and positions
-
-Calculate rolling mean $\mathrm{MA}_{40,t}$ and rolling standard deviation $\mathrm{SD}_{40,t}$, and set:
-
-$$
-z_t=\frac{S_t-\mathrm{MA}_{40,t}}{\mathrm{SD}_{40,t}},
-\qquad q_t=-z_t.
-$$
-
-The desired share quantities are:
-
-$$
-n_t^{\mathrm{EWC}}=q_t,
-\qquad n_t^{\mathrm{EWA}}=-\hat\beta q_t.
-$$
-
-The historical hedge ratio and lookback remain fixed after 2012; the rolling mean and volatility update through time.
-
-### 5. Backtest and performance
-
-Calculate daily profit and loss using the **previous day's holdings**:
-
-$$
-\mathrm{PnL}_t=\sum_{i\in\{\mathrm{EWA},\mathrm{EWC}\}}n_{i,t-1}(P_{i,t}-P_{i,t-1}).
-$$
-
-Following Chan's simplified return definition, divide by prior gross dollar exposure:
-
-$$
-r_t=\frac{\mathrm{PnL}_t}{\sum_i\left|n_{i,t-1}P_{i,t-1}\right|}.
-$$
-
-These are **returns on gross exposure, not returns on an actual brokerage account's equity**. The performance index is the cumulative product $\prod_t(1+r_t)$.
-
-## Preliminary results
-
-The following figures are from the initial notebook run, **before trading costs, financing costs, or realistic execution modelling**:
-
-| Metric | 2006–2012 (in-sample) | 2013–2026 (post-2012 evaluation) |
+| Metric | 2006–2012 (training) | 2013–2026 (evaluation) |
 |---|---:|---:|
-| Annualized arithmetic return (APR) | 5.77% | 3.71% |
-| Compounded annual growth of return index | 5.44% | 3.58% |
-| Annualized volatility | 9.78% | 6.26% |
-| Sharpe ratio (zero risk-free rate assumed) | 0.590 | 0.593 |
-| Maximum drawdown of return index | −20.81% | −17.25% |
+| Annualized mean daily return | 5.77% | 3.71% |
+| Annualized growth of compounded return index | 5.44% | 3.58% |
+| Annualized daily-return volatility | 9.78% | 6.26% |
+| Sharpe (zero risk-free rate assumed) | 0.59 | 0.59 |
+| Max drawdown of return index | −20.81% | −17.25% |
 
-The post-2012 compounded **gross-exposure return index** ends near **1.62×** its starting value. This **does not** imply that a real $100 brokerage account would have grown to $162: the backtest has not modelled account equity, margin, or dynamic capital allocation.
+The return index rises to approximately **1.62** over 2013–2026. My main takeaway is that the simplified signal still produces **positive pre-cost returns**, even though the spread based on the 2006–2012 hedge ratio drifts considerably in later years. That is not enough to conclude that the strategy is investable.
 
-**Interpretation:** The initial two-ETF baseline produces a positive pre-cost return series, but its moderate risk-adjusted performance and the instability of the fixed-beta spread raise questions about practical profitability.
+### What the results do *not* mean
 
-## Limitations and next steps
+The index is **not an actual brokerage-account equity curve**. Returns are divided by the gross value of the positions, while the position size itself is determined by the z-score rather than by available capital. In this return definition, the absolute size of a nonzero z-score position cancels out: the series mainly measures the performance of the *direction* of the signal, not the economic effect of linearly scaling position size. Therefore, an index of 1.62 does **not** mean that an actual $100 account would have grown to $162.
 
-- **Execution:** Daily close-based signals with lagged positions approximate the timing of trading. Executing at known close prices is not guaranteed.
-- **Costs:** Transaction costs, bid–ask spreads, ETF short-borrow fees, financing, and dividend-related short obligations are not modelled.
-- **Capital:** Share quantities are signal-based rather than scaled to account equity; the reported compounded index is not an investable wealth process.
-- **Data:** Adjusted-price returns simplify the treatment of distributions and may not match cash flows from actual long/short stock positions.
-- **Inference:** The training-period cointegration result is not significant at 5%. Data from the evaluation period have also been inspected during exploratory analysis, so it is not a completely untouched holdout.
-- **Extensions:** A self-financing capital-based backtest, cost and turnover analysis, a consistent benchmark, and comparison with Chan's actual EWA/EWC Kalman-filter specification.
+The backtest also omits trading costs, short borrow and financing costs, margin constraints and slippage. It uses adjusted closing prices and a simplified close-to-close execution convention. I have inspected the later data during exploratory analysis, so the evaluation period is not a completely untouched holdout.
 
-## Reproduce the analysis
+## Run the notebook
 
-1. Create a Python virtual environment and select it as the interpreter / Jupyter kernel.
-2. Install dependencies:
+```bash
+python -m pip install -r requirements.txt
+```
 
-   ```bash
-   python -m pip install -r requirements.txt
-   ```
+Open [`analysis.ipynb`](analysis.ipynb), select the project environment as the Jupyter kernel, and run the cells from top to bottom. The notebook downloads data with `yfinance` (`auto_adjust=True`); data revisions and download dates may affect the results.
 
-3. Open [`analysis.ipynb`](analysis.ipynb) and execute cells in order.
+## Next steps
 
-Note that Yahoo Finance may revise or add historical data; numbers can vary across download dates. Review the notebook's downloaded sample and the selected end date when reproducing results.
+The first priority is a capital-based portfolio backtest, including position limits and transaction costs. I would also like to compare the fixed hedge ratio with the Kalman-filter approach from Chan's actual EWA/EWC example.
 
-## Reference
+## Reference and code provenance
 
-Chan, E. P. (2013). *Algorithmic Trading: Winning Strategies and Their Rationale*. Wiley. See Chapter 2 (Examples 2.4, 2.6–2.8) and Chapter 3 (Example 3.3).
+Chan, Ernest P. (2013). *Algorithmic Trading: Winning Strategies and Their Rationale*. Wiley, Chapters 2–3.
 
-## Code provenance
-
-This is a learning-oriented research project. Some implementation code and explanations were drafted with AI assistance; statistical assumptions, output validation, and interpretations require independent review.
-
-*For research and educational purposes only; not investment advice.*
+This is an independent learning project based on Chan's research ideas. I used AI assistance to draft parts of the Python implementation and documentation; the statistical interpretation, assumptions, and limitations are documented here so the work can be examined and reproduced.
